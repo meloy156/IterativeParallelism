@@ -20,12 +20,16 @@
 
 ## 📌 О проекте
 
-**IterativeParallelism** — это реализация двух интерфейсов:
+**IterativeParallelism** — реализация интерфейса `NewListIP`, расширяющего `ListIP`.
 
-- `ScalarIP` — параллельные скалярные операции над списками.
-- `NewScalarIP` — то же самое, но с дополнительным параметром `step` (шаг выборки).
+Основные операции над списками:
+- `filter` — отбор элементов по предикату;
+- `map` — преобразование элементов функцией;
+- `indices` — получение индексов элементов, удовлетворяющих предикату.
 
-Каждый метод **разбивает список на `threads` частей**, обрабатывает их **параллельно** в отдельных потоках и **объединяет** локальные результаты в один глобальный ответ.
+В реализации также есть дополнительные скалярные операции: `argMax`, `argMin`, `indexOf`, `lastIndexOf` и `sumIndices`. Для `filter`, `map` и `indices` предусмотрены варианты с параметром `step`, который задаёт шаг выборки.
+
+Методы разбивают список на части, обрабатывают их параллельно в отдельных потоках и объединяют локальные результаты в общий ответ.
 
 Проект демонстрирует классический паттерн параллельных вычислений:
 
@@ -52,16 +56,16 @@ Partition  →  Process  →  Reduce
 
 | Метод | Что делает | Возвращает |
 |:------|:-----------|:-----------|
-| `argMax` | Индекс **первого максимума** | `int` |
-| `argMin` | Индекс **первого минимума** | `int` |
-| `indexOf` | Индекс **первого** подходящего элемента | `int` или `-1` |
-| `lastIndexOf` | Индекс **последнего** подходящего элемента | `int` или `-1` |
-| `sumIndices` | **Сумма индексов** подходящих элементов | `long` или `0` |
+| `filter` | Оставляет элементы, удовлетворяющие предикату | `List<T>` |
+| `map` | Преобразует элементы функцией | `List<R>` |
+| `indices` | Возвращает индексы элементов, удовлетворяющих предикату | `int[]` |
+| `argMax` | Индекс первого максимума | `int` |
+| `argMin` | Индекс первого минимума | `int` |
+| `indexOf` | Индекс первого подходящего элемента | `int` или `-1` |
+| `lastIndexOf` | Индекс последнего подходящего элемента | `int` или `-1` |
+| `sumIndices` | Сумма индексов подходящих элементов | `long` |
 
-Каждый метод существует в **двух версиях**:
-
-1. Без шага (обрабатываются **все** элементы).
-2. С параметром `step` (обрабатываются только индексы, **кратные** `step`).
+Для `filter`, `map` и `indices` реализованы версии без шага и с параметром `step`. В версии с шагом рассматриваются только элементы, индексы которых кратны `step`.
 
 ---
 
@@ -136,29 +140,29 @@ step = 2
 
 ## 📚 API
 
-### Интерфейс `ScalarIP`
+### Интерфейс `ListIP`
 
 ```java
-public interface ScalarIP {
-    <T> int  argMax      (int threads, List<T> values, Comparator<? super T> comparator);
-    <T> int  argMin      (int threads, List<T> values, Comparator<? super T> comparator);
-    <T> int  indexOf     (int threads, List<T> values, Predicate<? super T> predicate);
-    <T> int  lastIndexOf (int threads, List<T> values, Predicate<? super T> predicate);
-    <T> long sumIndices  (int threads, List<? extends T> values, Predicate<? super T> predicate);
+public interface ListIP {
+    <T> List<T> filter(int threads, List<? extends T> values,
+                       Predicate<? super T> predicate) throws InterruptedException;
+    <T, R> List<R> map(int threads, List<? extends T> values,
+                       Function<? super T, ? extends R> function) throws InterruptedException;
 }
 ```
 
-### Интерфейс `NewScalarIP`
+### Интерфейс `NewListIP`
 
 ```java
-public interface NewScalarIP extends ScalarIP {
-    <T> int  argMax      (int threads, List<T> values, Comparator<? super T> comparator, int step);
-    <T> int  argMin      (int threads, List<T> values, Comparator<? super T> comparator, int step);
-    <T> int  indexOf     (int threads, List<T> values, Predicate<? super T> predicate, int step);
-    <T> int  lastIndexOf (int threads, List<T> values, Predicate<? super T> predicate, int step);
-    <T> long sumIndices  (int threads, List<? extends T> values, Predicate<? super T> predicate, int step);
+public interface NewListIP extends ListIP {
+    <T> List<T> filter(int threads, List<? extends T> values,
+                       Predicate<? super T> predicate, int step) throws InterruptedException;
+    <T, R> List<R> map(int threads, List<? extends T> values,
+                       Function<? super T, ? extends R> function, int step) throws InterruptedException;
 }
 ```
+
+В реализации также доступны `indices` и дополнительные скалярные методы, перечисленные выше.
 
 ---
 
@@ -185,7 +189,7 @@ find src -name "*.java" -print0 | xargs -0 javac -cp "lib/*" -d out
 
 ```bash
 java -cp "out:lib/*" \
-     info.kgeorgiy.java.advanced.iterative.Tester scalar IterativeParallelism
+     info.kgeorgiy.java.advanced.iterative.Tester list IterativeParallelism
 ```
 
 > На Windows разделитель classpath — `;`, на Linux/macOS — `:`.
@@ -200,18 +204,26 @@ java -cp "out:lib/*" \
 IterativeParallelism ip = new IterativeParallelism();
 List<Integer> values = List.of(3, 1, 4, 1, 5, 9, 2, 6);
 
-int  maxIdx    = ip.argMax(4, values, Integer::compare);         // 5
-int  minIdx    = ip.argMin(4, values, Integer::compare);         // 1
-int  idxOf5    = ip.indexOf(4, values, x -> x == 5);             // 4
-int  lastSmall = ip.lastIndexOf(4, values, x -> x < 3);          // 6
-long sumEven   = ip.sumIndices(4, values, x -> x % 2 == 0);      // 0 + 2 + 7 = 9
+List<Integer> small = ip.filter(4, values, x -> x < 5);
+// [3, 1, 4, 1, 2]
+
+List<String> strings = ip.map(4, values, String::valueOf);
+// ["3", "1", "4", "1", "5", "9", "2", "6"]
+
+int[] matching = ip.indices(4, values, x -> x % 2 == 0);
+// [2, 6]
+
+int maxIdx = ip.argMax(4, values, Integer::compare); // 5
 ```
 
 ### С шагом
 
 ```java
-int maxEven = ip.argMax(4, values, Integer::compare, 2);         // 6 (значение 2)
-int minOdd  = ip.argMin(4, values, Integer::compare, 3);         // 1 (значение 1)
+List<Integer> selected = ip.filter(4, values, x -> true, 2);
+// [3, 4, 5, 2] — элементы с индексами 0, 2, 4, 6
+
+List<String> everyThird = ip.map(4, values, String::valueOf, 3);
+// преобразуются элементы с индексами 0, 3, 6
 ```
 
 ### Со своим компаратором
@@ -293,7 +305,7 @@ jobs:
 
       - name: Run tests
         run: |
-          java -cp "out:lib/*" info.kgeorgiy.java.advanced.iterative.Tester scalar IterativeParallelism
+          java -cp "out:lib/*" info.kgeorgiy.java.advanced.iterative.Tester list IterativeParallelism
 ```
 
 ### Локальный запуск того же
@@ -301,7 +313,7 @@ jobs:
 ```bash
 mkdir -p out
 find src -name "*.java" -print0 | xargs -0 javac -cp "lib/*" -d out
-java -cp "out:lib/*" info.kgeorgiy.java.advanced.iterative.Tester scalar IterativeParallelism
+java -cp "out:lib/*" info.kgeorgiy.java.advanced.iterative.Tester list IterativeParallelism
 ```
 
 ---
@@ -394,8 +406,8 @@ for (int i : result) {
 
 ## 🗺️ Roadmap
 
-- [x] Реализация `ScalarIP`
-- [x] Реализация `NewScalarIP` (с `step`)
+- [x] Реализация `ListIP`
+- [x] Реализация `NewListIP` с поддержкой `step`
 - [x] Покрытие всеми тестами `info.kgeorgiy.java.advanced.iterative`
 - [x] Настройка CI (GitHub Actions)
 - [x] README с бейджами и документацией
